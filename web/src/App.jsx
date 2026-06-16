@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import Dashboard from './Dashboard.jsx'
+import RobotView from './RobotView.jsx'
+import Module5View from './Module5View.jsx'
 
 const WS          = `ws://${location.host}/ws`
 const BACKEND_URL = `http://localhost:8000`
@@ -450,6 +453,92 @@ function Module3View({ onStop, feedbackState, logs, startKey }) {
   )
 }
 
+function Module4View({ onStop, logs, startKey, mod4Phase, mod4Speech, mod4Waiting, mod4Gesture, mod4SessionId, wsRef }) {
+  const [showDashboard, setShowDashboard] = useState(false)
+
+  const handleM4Response = useCallback((value, latency) => {
+    const msg = JSON.stringify({ type: 'eval_response', value, latency })
+    if (wsRef?.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(msg)
+    }
+  }, [wsRef])
+
+  const handleM4Initiative = useCallback(() => {
+    const msg = JSON.stringify({ type: 'eval_initiative' })
+    if (wsRef?.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(msg)
+    }
+  }, [wsRef])
+
+  const handleDownloadReport = useCallback(async () => {
+    if (!mod4SessionId) return
+    try {
+      const r = await fetch(`/api/sessions/${mod4SessionId}/report`)
+      if (!r.ok) throw new Error()
+      const data = await r.json()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `sesion_${mod4SessionId}.json`
+      a.click(); URL.revokeObjectURL(url)
+    } catch {}
+  }, [mod4SessionId])
+
+  return (
+    <section className="module-view">
+      <div className="mod-topbar mod4-topbar">
+        <div className="mod-topbar-left">
+          <div className="mod-icon-circle mod4-circle">
+            <Icon name="fa-flask" />
+          </div>
+          <div>
+            <h2>Prueba de Campo</h2>
+            <p>Rutina estructurada de evaluacion &mdash; OE1 a OE5</p>
+          </div>
+        </div>
+        <div className="mod4-header-btns">
+          <button className={`btn ${showDashboard ? 'btn-active' : 'btn-ghost'}`}
+                  onClick={() => setShowDashboard(d => !d)}>
+            <Icon name={showDashboard ? 'fa-robot' : 'fa-chart-simple'} />
+            {showDashboard ? 'Robot' : 'Dashboard'}
+          </button>
+          <button className="btn btn-ghost" onClick={handleDownloadReport}
+                  disabled={!mod4SessionId} title="Exportar reporte JSON">
+            <Icon name="fa-download" />
+          </button>
+          <button className="btn btn-stop" onClick={onStop}>
+            <Icon name="fa-stop" /> Detener
+          </button>
+        </div>
+      </div>
+
+      {showDashboard ? (
+        <Dashboard />
+      ) : (
+        <div className="m4-layout">
+          <div className="m4-main">
+            <SectionTitle icon="fa-video">Nino — Camara</SectionTitle>
+            <CameraStream mid={4} startKey={startKey} />
+          </div>
+          <div className="m4-side">
+            <SectionTitle icon="fa-robot">Estado del Robot</SectionTitle>
+            <RobotView
+              phase={mod4Phase}
+              speech={mod4Speech}
+              gesture={mod4Gesture}
+              waitingForResponse={mod4Waiting}
+              onResponse={handleM4Response}
+              onInitiative={handleM4Initiative}
+            />
+            <SectionTitle icon="fa-terminal">Log en vivo</SectionTitle>
+            <EventLog logs={logs} />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ModuleCard({ id, icon, title, desc, tags, color, onStart, enabled }) {
   return (
     <div
@@ -514,6 +603,22 @@ function ModuleSelector({ onStart, backendOk }) {
           color="#10b981"
           onStart={onStart} enabled={backendOk}
         />
+        <ModuleCard
+          id={4} icon="fa-flask"
+          title="Prueba de Campo"
+          desc="Rutina estructurada de 15 min. Mide 5 objetivos: contacto visual, atencion conjunta, falsa creencia, TR, iniciativas."
+          tags={['Rutina', '5 OEs', 'Robot']}
+          color="#f59e0b"
+          onStart={onStart} enabled={backendOk}
+        />
+        <ModuleCard
+          id={5} icon="fa-hand"
+          title="Deteccion por Agarre"
+          desc="Detecta objetos siendo sostenidos. YOLO en el area de la mano, no en toda la imagen."
+          tags={['MediaPipe Hands', 'YOLO', 'Crop ROI']}
+          color="#ec4899"
+          onStart={onStart} enabled={backendOk}
+        />
       </div>
     </section>
   )
@@ -530,6 +635,12 @@ export default function App() {
   const [logs,        setLogs]         = useState([])
   const [lastGesture, setLastGesture]  = useState(null)
   const [feedbackState, setFeedbackState] = useState(null)
+  const [mod4Phase, setMod4Phase] = useState(null)
+  const [mod4Speech, setMod4Speech] = useState(null)
+  const [mod4Waiting, setMod4Waiting] = useState(false)
+  const [mod4Gesture, setMod4Gesture] = useState(null)
+  const [mod4SessionId, setMod4SessionId] = useState(null)
+  const [graspDetection, setGraspDetection] = useState({})
   const wsRef = useRef(null)
 
   useEffect(() => {
@@ -545,13 +656,22 @@ export default function App() {
         switch (msg.type) {
           case 'module_started':     setActiveModule(msg.module); break
           case 'module_stopped':     setActiveModule(null); break
+          case 'module4_started':    setActiveModule(4); setMod4Phase(0); setMod4SessionId(msg.session_id); break
+          case 'module4_stopped':    setActiveModule(null); setMod4SessionId(null); break
           case 'detection':          setDetection(msg); break
           case 'capture':            setCaptures(p => [...p, msg]); break
-          case 'gesture_sent':       setLastGesture(msg); break
+          case 'gesture_sent':       setLastGesture(msg); setMod4Gesture(msg.gesture_id); break
           case 'log':                setLogs(p => [...p.slice(-300), msg.message]); break
           case 'robot_connected':    setRobotOk(true); break
           case 'robot_disconnected': setRobotOk(false); break
           case 'feedback_state':     setFeedbackState(msg); break
+          case 'phase_change':       setMod4Phase(msg.phase); setMod4Waiting(false); break
+          case 'robot_speech':       setMod4Speech(msg.text); break
+          case 'trial_start':        if (msg.oe >= 3) setMod4Waiting(true); break
+          case 'trial_result':       setMod4Waiting(false); break
+          case 'grasp_detection':    setGraspDetection(msg); break
+          case 'grasp_raw':          setGraspDetection(msg); break
+          case 'module5_stopped':    setActiveModule(null); break
         }
       }
     }
@@ -573,7 +693,7 @@ export default function App() {
 
   const startModule = useCallback(async (id) => {
     setDetection({}); setCaptures([]); setLogs([]); setLastGesture(null); setFeedbackState(null)
-    setStartKey(k => k + 1)   // fuerza reconexión del stream
+    setGraspDetection({}); setStartKey(k => k + 1)
     try { await fetch(`/api/module/${id}/start`, { method: 'POST' }) } catch {}
     setActiveModule(id)
   }, [])
@@ -629,6 +749,16 @@ export default function App() {
         )}
         {activeModule === 3 && (
           <Module3View onStop={stopModule} feedbackState={feedbackState} logs={logs} startKey={startKey} />
+        )}
+        {activeModule === 4 && (
+          <Module4View onStop={stopModule} logs={logs} startKey={startKey}
+            mod4Phase={mod4Phase} mod4Speech={mod4Speech}
+            mod4Waiting={mod4Waiting} mod4Gesture={mod4Gesture}
+            mod4SessionId={mod4SessionId} wsRef={wsRef}
+          />
+        )}
+        {activeModule === 5 && (
+          <Module5View onStop={stopModule} detection={graspDetection} logs={logs} startKey={startKey} />
         )}
       </main>
 

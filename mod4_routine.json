@@ -1,0 +1,94 @@
+{
+  "session_label": "Demo",
+
+  "phases": [
+    {
+      "id": 0,
+      "name": "inicio",
+      "duration_s": 15,
+      "calibrate": true,
+      "tts": [
+        "Hola, soy el robot. Vamos a jugar juntos.",
+        "Mírame un momento, por favor."
+      ],
+      "robot_gesture": 0
+    },
+    {
+      "id": 1,
+      "name": "quieto",
+      "duration_s": 120,
+      "tts": ["Voy a estar quieto. Solo mírame."],
+      "robot_gesture": 0,
+      "auto_blink": true
+    },
+    {
+      "id": 2,
+      "name": "mira",
+      "duration_s": 60,
+      "tts": ["Ahora te estoy mirando fijamente."],
+      "robot_gesture": 0
+    },
+    {
+      "id": 3,
+      "name": "senala",
+      "duration_s": 60,
+      "tts_intro": "Ahora voy a señalar algunas cosas. Mira hacia donde señalo.",
+      "trials": [
+        {"object": "el objeto de la izquierda", "arm_gesture": "OK"},
+        {"object": "el objeto de la derecha",   "arm_gesture": "OK"},
+        {"object": "el objeto de arriba",       "arm_gesture": "OK"}
+      ]
+    },
+    {
+      "id": 4,
+      "name": "falsa_creencia",
+      "duration_s": 180,
+      "story": [
+        "Voy a guardar esta pelota en la Caja A.",
+        "Guardo la pelota en la Caja A y cierro la tapa.",
+        "Ahora llega alguien y mueve la pelota a la Caja B.",
+        "Voy a esconderme un momento."
+      ],
+      "question": "¿Dónde buscaré la pelota cuando regrese? ¿En la Caja A o en la Caja B?",
+      "options": [
+        {"label": "Caja A", "correct": true},
+        {"label": "Caja B", "correct": false}
+      ]
+    },
+    {
+      "id": 5,
+      "name": "preguntas",
+      "duration_s": 180,
+      "questions": [
+        "¿Te gusta jugar conmigo?",
+        "¿Quieres seguir jugando?",
+        "¿De qué color es el cielo?",
+        "¿Tienes un juguete favorito?",
+        "¿Quieres conocer a mi amigo?"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "libre",
+      "duration_s": 240,
+      "tts": ["Muy bien. Ahora voy a descansar un poco."],
+      "robot_gesture": 0
+    }
+  ],
+
+  "oe_thresholds": {
+    "oe1_min_duration_ms": 3000,
+    "oe1_improvement_pct": 20,
+    "oe2_min_per_session": 2,
+    "oe3_min_accuracy": 0.5,
+    "oe4_baseline_delta_pct": 15,
+    "oe5_min_per_session": 1
+  },
+
+  "gaze": {
+    "yaw_threshold_deg": 15,
+    "pitch_threshold_deg": 10,
+    "joint_attention_window_s": 3,
+    "joint_attention_yaw_change_deg": 20
+  }
+}

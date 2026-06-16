@@ -35,6 +35,15 @@ help:
 	@echo '  feedback-cam      PID con índices de cámara explicitos'
 	@echo '  feedback-tune     PID con ganancias custom'
 	@echo ''
+	@echo '── Módulo 4 — Prueba de Campo ──'
+	@echo '  mod4              Rutina estructurada (5 OEs) via web'
+	@echo '  mod4-dry          Dry-run sin cámara ni robot'
+	@echo ''
+	@echo '── Módulo 5 — Grasp + YOLO Crop ──'
+	@echo '  mod5              Deteccion por agarre (camara en vivo)'
+	@echo '  mod5-debug        Modo debug (overlay distancias dedos)'
+	@echo '  mod5-video        Probar con video (VIDEO=ruta.mp4)'
+	@echo ''
 	@echo '── Utilidades ──'
 	@echo '  classify          Solo clasificador (pipe stdin → stdout)'
 	@echo '  bridge            serial_bridge standalone'
@@ -105,6 +114,25 @@ feedback-cam:
 
 feedback-tune:
 	$(PYTHON) visual_feedback_controller.py --kp 0.8 --ki 0.05 --kd 0.1 $(ARGS)
+
+# ── Módulo 4 ──────────────────────────────────────────────
+mod4: .uv-ready
+	$(PYTHON) server.py &
+	@echo "Backend iniciado. Abre http://localhost:8000"
+	@echo "Selecciona 'Prueba de Campo' en la interfaz."
+
+mod4-dry: .uv-ready
+	$(PYTHON) run_module4.py --dry-run --seed 42 --auto-eval $(ARGS)
+
+# ── Módulo 5 ──────────────────────────────────────────────
+mod5: .uv-ready
+	$(PYTHON) mod5_grasp_detector.py $(ARGS)
+
+mod5-debug: .uv-ready
+	$(PYTHON) mod5_grasp_detector.py --debug $(ARGS)
+
+mod5-video: .uv-ready
+	$(PYTHON) mod5_grasp_detector.py --video $(VIDEO) $(ARGS)
 
 # ── Utilidades ────────────────────────────────────────────
 classify: .uv-ready
