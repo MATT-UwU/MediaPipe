@@ -38,6 +38,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from PIL import Image, ImageDraw
 
+import tracking_db as db
+
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
@@ -103,6 +105,7 @@ def push(msg: dict):
 async def on_start():
     global event_loop
     event_loop = asyncio.get_event_loop()
+    db.init_db()
 
 # ============================================================
 # REST API
@@ -131,7 +134,7 @@ async def api_start(mid: int):
         except: pass
     state.active_module = mid
     state.stop_event.clear()
-    fn = {1: _run_module1, 2: _run_module2, 3: _run_module3}.get(mid)
+    fn = {1: _run_module1, 2: _run_module2, 3: _run_module3, 4: _run_module4, 5: _run_module5}.get(mid)
     if fn is None:
         return {"error": "invalid module"}
     t = threading.Thread(target=fn, daemon=True)
@@ -162,14 +165,60 @@ def api_capture_image(cid: str):
             )
     return {"error": "not found"}
 
+
+# ============================================================
+# SESSIONS / DASHBOARD API
+# ============================================================
+@app.get("/api/sessions")
+def api_sessions():
+    return db.get_sessions()
+
+@app.post("/api/sessions")
+def api_create_session(label: str = "Demo"):
+    sid = db.create_session(label)
+    return {"session_id": sid}
+
+@app.post("/api/sessions/close")
+def api_close_session():
+    sessions = db.get_sessions()
+    open_sessions = [s for s in sessions if s.get("ended_at") is None]
+    if open_sessions:
+        db.close_session(open_sessions[-1]["id"])
+        return {"status": "closed", "session_id": open_sessions[-1]["id"]}
+    return {"status": "no_open_session"}
+
+@app.get("/api/sessions/{sid}")
+def api_session(sid: int):
+    return db.get_session_summary(sid)
+
+@app.get("/api/sessions/{sid}/report")
+def api_session_report(sid: int):
+    return db.get_session_report(sid)
+
+@app.get("/api/dashboard")
+def api_dashboard():
+    return db.get_cross_session_summary()
+
+
 @app.websocket("/ws")
 async def ws_endpoint(sock: WebSocket):
     await ws.connect(sock)
     try:
         while True:
             msg = json.loads(await sock.receive_text())
-            if msg.get("type") == "ping":
+            t = msg.get("type")
+            if t == "ping":
                 await sock.send_json({"type": "pong"})
+            elif t == "eval_response":
+                if state.proc and state.proc.stdin and not state.proc.stdin.closed:
+                    line = json.dumps({"type": "eval_response", "value": msg["value"], "latency": msg.get("latency", 0)}) + "\n"
+                    state.proc.stdin.write(line)
+                    state.proc.stdin.flush()
+            elif t == "eval_initiative":
+                if state.proc and state.proc.stdin and not state.proc.stdin.closed:
+                    line = json.dumps({"type": "eval_initiative"}) + "\n"
+                    state.proc.stdin.write(line)
+                    state.proc.stdin.flush()
     except WebSocketDisconnect:
         ws.disconnect(sock)
 
@@ -181,6 +230,8 @@ _FRAME_FILES = {
     1: _TMP / "tea_module1_frame.jpg",
     2: _TMP / "tea_module2_frame.jpg",
     3: _TMP / "tea_module3_frame.jpg",
+    4: _TMP / "tea_module4_frame.jpg",
+    5: _TMP / "tea_module5_frame.jpg",
 }
 
 def _make_placeholder() -> bytes:
@@ -451,8 +502,166 @@ def _run_module3():
             push({"type": "log", "message": "Controlador de lazo cerrado finalizado."})
             break
         time.sleep(0.5)
+    _kill(proc)
+
+
+# ============================================================
+# MÓDULO 4 — run_module4.py (prueba de campo)
+# ============================================================
+_MOD4_TIMEOUT = 60 * 20  # 20 min max
+
+def _run_module4():
+    push({"type": "log", "message": "Iniciando prueba de campo (Módulo 4)..."})
+
+    sid = db.create_session("Demo")
+    push({"type": "module4_started", "session_id": sid})
+
+    proc = subprocess.Popen(
+        [PYTHON, str(BASE_DIR / "run_module4.py"),
+         "--session-id", str(sid),
+         "--serial-port", SERIAL_PORT],
+        cwd=str(BASE_DIR),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, encoding="utf-8", errors="replace",
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        start_new_session=not IS_WINDOWS,
+    )
+    state.proc = proc
+
+    def _read_stdout():
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                ev_type = ev.get("type", "")
+
+                if ev_type == "log":
+                    push({"type": "log", "message": ev["message"]})
+
+                elif ev_type == "robot_speech":
+                    push({"type": "log",
+                          "message": f"🤖 Robot: \"{ev['text']}\""})
+
+                elif ev_type == "phase_change":
+                    state.last_detection = {"phase": ev["phase"], "name": ev["name"]}
+                    push({"type": "phase_change", **ev})
+
+                elif ev_type == "eye_contact":
+                    push({"type": "metric_update", "oe": 1,
+                          "duration_ms": ev["duration_ms"],
+                          "threshold_ms": ev["threshold_ms"]})
+
+                elif ev_type == "trial_result":
+                    push({"type": "trial_result", **ev})
+
+                elif ev_type == "response_time":
+                    push({"type": "metric_update", "oe": 4,
+                          "stimulus": ev.get("stimulus_type", ""),
+                          "latency_ms": ev["latency_ms"]})
+
+                elif ev_type == "calibration":
+                    push({"type": "log",
+                          "message": f"Calibración: yaw={ev['yaw_center']}°"})
+
+                elif ev_type == "gesture_sent":
+                    push({"type": "gesture_sent",
+                          "gesture_id": ev["gesture_id"]})
+
+                elif ev_type == "trial_start":
+                    push({"type": "trial_start", **ev})
+
+                elif ev_type == "module4_stopped":
+                    push({"type": "module4_stopped"})
+
+            except json.JSONDecodeError:
+                pass
+
+    def _read_stderr():
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            push({"type": "log", "message": line})
+
+    threading.Thread(target=_read_stdout, daemon=True).start()
+    threading.Thread(target=_read_stderr, daemon=True).start()
+
+    deadline = time.time() + _MOD4_TIMEOUT
+    while not state.stop_event.is_set():
+        if proc.poll() is not None:
+            push({"type": "log", "message": "Módulo 4 finalizado."})
+            break
+        if time.time() > deadline:
+            push({"type": "log", "message": "Timeout Módulo 4."})
+            break
+        time.sleep(0.5)
 
     _kill(proc)
+
+
+# ============================================================
+# MÓDULO 5 — mod5_grasp_detector.py (agarre + YOLO crop)
+# ============================================================
+_MOD5_TIMEOUT = 60 * 30
+
+def _run_module5():
+    push({"type": "log", "message": "Iniciando modulo 5 (Grasp + YOLO crop)..."})
+
+    proc = subprocess.Popen(
+        [PYTHON, str(BASE_DIR / "run_module5.py")],
+        cwd=str(BASE_DIR),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, encoding="utf-8", errors="replace",
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        start_new_session=not IS_WINDOWS,
+    )
+    state.proc = proc
+
+    def _read_stdout():
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                ev_type = ev.get("type", "")
+
+                if ev_type == "grasp_detection":
+                    push({"type": "grasp_detection", **ev})
+
+                elif ev_type == "module5_stopped":
+                    push({"type": "module5_stopped"})
+
+                elif ev_type == "log":
+                    push({"type": "log", "message": ev["message"]})
+
+            except json.JSONDecodeError:
+                pass
+
+    def _read_stderr():
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            push({"type": "log", "message": line})
+
+    threading.Thread(target=_read_stdout, daemon=True).start()
+    threading.Thread(target=_read_stderr, daemon=True).start()
+
+    deadline = time.time() + _MOD5_TIMEOUT
+    while not state.stop_event.is_set():
+        if proc.poll() is not None:
+            push({"type": "log", "message": "Módulo 5 finalizado."})
+            break
+        if time.time() > deadline:
+            push({"type": "log", "message": "Timeout Módulo 5."})
+            break
+        time.sleep(0.5)
+
+    _kill(proc)
+
 
 # ============================================================
 # HELPERS

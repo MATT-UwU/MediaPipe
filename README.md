@@ -6,27 +6,31 @@ diseñado para trabajar habilidades socioemocionales en niños con TEA (Trastorn
 ## Arquitectura del Sistema
 
 ```
-                    ┌────────────────────────────────────────┐
-                    │           Frontend Web (React)         │
-                    │          localhost:5173 (dev)          │
-                    │          localhost:8000  (prod)        │
-                    └──────────────────┬─────────────────────┘
+                    ┌───────────────────────────────────────────┐
+                    │          Frontend Web (React + Vite)      │
+                    │          localhost:5173 (dev)             │
+                    │          localhost:8000  (prod)           │
+                    └──────────────────┬────────────────────────┘
                                        │ WebSocket + REST API
-                    ┌──────────────────▼─────────────────────┐
-                    │         Backend (FastAPI + Python)     │
-                    │         server.py — localhost:8000     │
-                    │                                        │
-                    │  ┌────────┐ ┌─────────┐ ┌────────────┐ │
-                    │  │ Mód. 1 │ │ Mód. 2  │ │  Mód. 3    │ │
-                    │  │ YOLO   │ │MediaPipe│ │Lazo Cerrado│ │
-                    │  │ Objetos│ │Rostro   │ │PID + 2 cams│ │
-                    │  └────────┘ └─────────┘ └────────────┘ │
-                    └──────────────────┬─────────────────────┘
+                    ┌──────────────────▼────────────────────────┐
+                    │         Backend (FastAPI + Python 3.11)   │
+                    │         server.py — localhost:8000        │
+                    │                                           │
+                    │  ┌────────┐ ┌─────────┐ ┌────────────┐   │
+                    │  │ Mód. 1 │ │ Mód. 2  │ │  Mód. 3    │   │
+                    │  │ YOLO   │ │MediaPipe│ │Lazo Cerrado│   │
+                    │  │ Objetos│ │Rostro   │ │PID + 2 cams│   │
+                    │  ├────────┤ ├─────────┤ ├────────────┤   │
+                    │  │ Mód. 4 │ │ Mód. 5  │ │             │   │
+                    │  │Prueba  │ │Grasp +  │ │             │   │
+                    │  │Campo   │ │YOLO crop│ │             │   │
+                    │  └────────┘ └─────────┘ └────────────┘   │
+                    └──────────────────┬────────────────────────┘
                                        │ Serial (9600 baud)
-                    ┌──────────────────▼─────────────────────┐
-                    │         Arduino Uno + PCA9685          │
-                    │         Servos × 6+ (cara + brazos)    │
-                    └────────────────────────────────────────┘
+                    ┌──────────────────▼────────────────────────┐
+                    │         Arduino Uno + PCA9685             │
+                    │         Servos × 6+ (cara + brazos)       │
+                    └───────────────────────────────────────────┘
 ```
 
 ## Hardware Requerido
@@ -43,6 +47,8 @@ diseñado para trabajar habilidades socioemocionales en niños con TEA (Trastorn
 
 > El Módulo 1 funciona con 1 cámara. El Módulo 2 funciona con 1 cámara.
 > El Módulo 3 requiere **2 cámaras** (una apuntando a la persona, otra al robot).
+> El Módulo 4 funciona con 1 cámara (enfocando al niño).
+> El Módulo 5 funciona con 1 cámara (enfocando las manos del niño).
 
 ## Instalación
 
@@ -91,7 +97,7 @@ uv run python server.py
 Esto levanta:
 - **API REST** en `http://localhost:8000`
 - **WebSocket** en `ws://localhost:8000/ws`
-- **Streams MJPEG** en `/stream/1`, `/stream/2`, `/stream/3`
+- **Streams MJPEG** en `/stream/1` a `/stream/5`
 
 ### Interfaz web
 
@@ -159,9 +165,54 @@ make feedback  # lanza servidor + visual_feedback_controller
 Kp=0.8, Ki=0.05, Kd=0.1
 ```
 
+### Módulo 4 — Prueba de Campo (Evaluación Estructurada)
+
+```bash
+# Desde la web: selecciona "Prueba de Campo"
+# O en modo autónomo (sin frontend):
+.venv/bin/python run_module4.py --dry-run --seed 42 --auto-eval
+```
+
+- **Modelo**: MediaPipe FaceLandmarker (head pose yaw/pitch)
+- **Pipeline**: `server.py` → `run_module4.py` → `tracking_db.py`
+- **Duración**: ~15 min (7 fases: inicio, quieto, mira, señala, falsa creencia, preguntas, libre)
+- **Mide 5 objetivos (OE)**:
+
+| OE | Métrica | Método |
+|----|---------|--------|
+| OE1 | Contacto visual sostenido | Head pose (yaw/pitch) ventana 3s |
+| OE2 | Atención conjunta | Cambio de mirada post-señalamiento |
+| OE3 | Falsa creencia | Respuesta del evaluador (botones C/X) |
+| OE4 | Tiempo de reacción | Latencia de mirada o respuesta |
+| OE5 | Iniciativas espontáneas | Registro del evaluador (botón I) |
+
+- **Persistencia**: SQLite (`tracking.db`) con tabla por OE
+- **Dashboard web**: 5 cards de progreso + tabla comparativa cross-session
+- **Atajos de teclado**: `C` Correcto, `X` Incorrecto, `I` Iniciativa
+
+### Módulo 5 — Detección por Agarre (YOLO en crop de mano)
+
+```bash
+# Desde la web: selecciona "Deteccion por Agarre"
+# O standalone con cámara:
+.venv/bin/python mod5_grasp_detector.py --debug
+# Con video grabado:
+.venv/bin/python mod5_grasp_detector.py --video ruta.mp4
+```
+
+- **Modelos**: MediaPipe HandLandmarker + YOLO v11 (`yolo11s.pt`)
+- **Pipeline**: `server.py` → `run_module5.py` → `mod5_grasp_detector.py`
+- **Detección de agarre**: clasifica mano como puño, pinza, palma abierta
+- **Crop ROI**: recorta área alrededor de la mano (70% margen) y corre YOLO ahí
+- **Reacciones**: mismo mapeo objeto→emoción que Módulo 1 (serial + TTS)
+- **Modos**:
+  - `--debug`: overlay con distancias de dedos y todas las detecciones YOLO
+  - `--video path`: prueba con video grabado (loop infinito)
+  - Tecla `D`: toggle debug en vivo
+
 ## Protocolo Serial
 
-### Módulo 1 y 2 (gestos discretos)
+### Módulo 1, 2, 4 y 5 (gestos discretos)
 
 ```
 cmd = f"{gesture_id}\n"         # gesture_serial.py:60
@@ -220,6 +271,21 @@ packet = "$" + ";".join(parts) + "#"   # serial_bridge.py:33
 | `make feedback-cam`| Índices de cámara custom                    |
 | `make feedback-tune`| Ganancias PID custom                       |
 
+### Módulo 4 — Prueba de Campo
+
+| Comando | Acción |
+|---------|--------|
+| `make mod4` | Rutina estructurada de 15 min (5 OEs) |
+| `make mod4-dry` | Dry-run con auto-eval (sin cámara ni robot) |
+
+### Módulo 5 — Detección por Agarre
+
+| Comando | Acción |
+|---------|--------|
+| `make mod5` | Grasp + YOLO crop (cámara en vivo) |
+| `make mod5-debug` | Modo debug con overlay de distancias |
+| `make mod5-video` | Prueba con video (`VIDEO=ruta.mp4`) |
+
 ### Utilidades
 
 | Comando             | Acción                                      |
@@ -236,6 +302,7 @@ packet = "$" + ";".join(parts) + "#"   # serial_bridge.py:33
 ARGS="..."             # Argumentos extra para el script
 make feedback ARGS="--camera-a 2 --camera-b 3"
 make face-gesture SERIAL_PORT=COM6
+make mod5-debug ARGS="--video ruta.mp4"
 ```
 
 ### Windows (PowerShell)
@@ -266,20 +333,27 @@ MediaPipeHELL/
 ├── run_module1.py                  # Wrapper Módulo 1 (captura frames YOLO)
 ├── run_face_capture.py             # Wrapper Módulo 2 (captura frames MediaPipe)
 ├── visual_feedback_controller.py   # Módulo 3 (PID + 2 cámaras)
+├── run_module4.py                  # Orquestador Módulo 4 (rutina 5 OEs)
+├── run_module5.py                  # Wrapper Módulo 5 (captura frames grasp)
 ├── tea_object_emotion.py           # YOLO + emociones (legacy)
+├── mod5_grasp_detector.py          # Módulo 5 (HandLandmarker + YOLO crop)
 ├── face_capture.py                 # MediaPipe FaceLandmarker (LIVE_STREAM)
 ├── classify_gesture.py             # Clasificador de gestos faciales
 ├── gesture_serial.py               # Envío serial de gestos
+├── tracking_db.py                  # SQLite persistencia (Módulo 4)
+├── mod4_routine.json               # Config de rutina Módulo 4
 ├── robot_face_landmarks.py         # FaceLandmarker en modo IMAGE (Módulo 3)
 ├── robot_face_state.py             # Mapeo blendshapes → ángulos servo
 ├── face_gestures_servo.py          # Prototipo original (LIVE_STREAM + serial)
 ├── set_directions.py               # Mapeo de direcciones (legacy)
 ├── serial_bridge.py                # Bridge serial a 115200 baud (legacy)
 ├── test_pipeline.py                # Genera datos de prueba para el pipeline
+├── test_mod4.py                    # Tests unitarios Módulo 4 (15 tests)
 ├── Makefile                        # Comandos de uso común (Linux/WSL)
 ├── make.ps1                        # Comandos de uso común (Windows PowerShell)
 ├── control.md                      # Documentación del lazo cerrado (Módulo 3)
 ├── pyproject.toml                  # Dependencias Python
+├── tracking.db                     # Base de datos SQLite (Módulo 4)
 ├── captures/                       # Capturas automáticas (Módulo 1)
 └── web/
     ├── package.json
@@ -287,8 +361,10 @@ MediaPipeHELL/
     └── src/
         ├── App.jsx                 # Componente principal React
         ├── App.css                 # Sistema de diseño (tema oscuro)
-        └── Icon.jsx                # Componente de iconos (Font Awesome)
-```
+        ├── Icon.jsx                # Componente de iconos (Font Awesome)
+        ├── Dashboard.jsx           # Dashboard OEs (Módulo 4)
+        ├── RobotView.jsx           # Vista del robot (Módulo 4)
+        └── Module5View.jsx         # Vista grasp detection (Módulo 5)
 
 ## Solución de Problemas
 
